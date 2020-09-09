@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+AWSTemplateFormatVersion: 2010-09-09
+
+Transform: AWS::Serverless-2016-10-31
+
+Resources:
+  Api:
+    Type: AWS::Serverless::Api
+    Properties:
+      DefinitionBody:
+        swagger: 2.0
+        info:
+          title: ServerlessResizeApi
+          description: Api for Image Resize invocation
+        paths:
+          /ImageResize/{size}/{filename}:
+            get:
+              x-amazon-apigateway-integration:
+                uri: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:ResizeFunction/invocations
+                type: AWS_PROXY
+                httpMethod: post
+          /ImageResize/center/{size}/{filename}:
+            get:
+              x-amazon-apigateway-integration:
+                uri: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:ResizeFunction/invocations
+                type: AWS_PROXY
+                httpMethod: post
+      StageName: prod
+      EndpointConfiguration: REGIONAL
+      Variables:
+        LambdaFunctionName: !Ref ResizeFunction
+
+  ServerLessResizeBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        RoutingRules:
+          - RedirectRule:
+              HttpRedirectCode: 307
+              HostName: !Sub ${Api}.execute-api.${AWS::Region}.amazonaws.com
+              Protocol: https
+              ReplaceKeyPrefixWith: prod/ImageResize/
+            RoutingRuleCondition:
+              HttpErrorCodeReturnedEquals: 404
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET]
+            AllowedOrigins: ['*']
+
+  ResizeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ResizeFunction
+      CodeUri: ./ImageResize/function.zip
+      Handler: ImageResize.lambda_handler
+      Runtime: python3.7
+      Timeout: 60
+      Environment:
+        Variables:
+          BUCKET: !Ref ServerLessResizeBucket
+          URL: !GetAtt ServerLessResizeBucket.WebsiteURL
+          ALLOWEDRESOLUTION: "[1080x1440,800x600,600x1080,720x480]"
+      Policies:
+          Statement:
+            - Resource: !Sub arn:aws:s3:::${ServerLessResizeBucket}/*
+              Effect: Allow
+              Action:
+                - s3:PutObject          
+            - Resource: "*"
+              Effect: Allow
+              Action:
+                - rekognition:DetectText
+                - rekognition:DetectFaces
+
+  ResizeFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ResizeFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*
+
+  ServerLessResizeBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ServerLessResizeBucket
+      PolicyDocument:
+        Statement:
+          - Action: s3:GetObject
+            Effect: Allow
+            Principal: "*"
+            Resource: !Sub arn:aws:s3:::${ServerLessResizeBucket}/*
+          - Action: s3:ListBucket
+            Effect: Allow
+            Principal: "*"
+            Resource: !Sub arn:aws:s3:::${ServerLessResizeBucket}
+          
+
+Outputs:
+  BucketWebsiteUrl:
+    Value: !GetAtt ServerLessResizeBucket.WebsiteURL
+  Bucket:
+    Value: !Ref ServerLessResizeBucket
+
+
+
+
