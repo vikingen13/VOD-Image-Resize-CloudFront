@@ -1,0 +1,195 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Parameters:
+  PriceClass:
+    Type: String
+    Description: The CloudFront distribution price class
+    Default: PriceClass_All
+    AllowedValues:
+    - PriceClass_100
+    - PriceClass_200
+    - PriceClass_All
+Resources:
+  ServerLessResizeBucketSite:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+  ServerLessResizeBucketOriginal:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: Distribution for VodImgResize
+        DefaultCacheBehavior:
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+          TargetOriginId: the-s3-bucket
+          ViewerProtocolPolicy: redirect-to-https
+        DefaultRootObject: index.html
+        CustomErrorResponses:
+        - ErrorCachingMinTTL: 300
+          ErrorCode: 403
+          ResponseCode: 200
+          ResponsePagePath: /index.html
+        - ErrorCachingMinTTL: 300
+          ErrorCode: 404
+          ResponseCode: 200
+          ResponsePagePath: /index.html
+        Enabled: true
+        HttpVersion: http2
+        Origins:
+        - DomainName:
+            Fn::GetAtt:
+            - ServerLessResizeBucketSite
+            - RegionalDomainName
+          Id: the-s3-bucket
+          S3OriginConfig:
+            OriginAccessIdentity:
+              Fn::Join:
+              - ''
+              - - origin-access-identity/cloudfront/
+                - Ref: CloudFrontOriginAccessIdentity
+        PriceClass:
+          Ref: PriceClass
+  CloudFrontOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment:
+          Fn::Sub: CloudFront OAI for VodImageResize website
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: ServerLessResizeBucketSite
+      PolicyDocument:
+        Statement:
+        - Action:
+          - s3:GetObject
+          Effect: Allow
+          Resource:
+            Fn::Join:
+            - ''
+            - - 'arn:aws:s3:::'
+              - Ref: ServerLessResizeBucketSite
+              - /*
+          Principal:
+            CanonicalUser:
+              Fn::GetAtt:
+              - CloudFrontOriginAccessIdentity
+              - S3CanonicalUserId
+        - Action:
+          - s3:*
+          Effect: Allow
+          Resource:
+            Fn::Join:
+            - ''
+            - - 'arn:aws:s3:::'
+              - Ref: ServerLessResizeBucketSite
+              - /*
+          Principal:
+            AWS:
+              Fn::GetAtt:
+              - ResizeFunctionExecutionRole
+              - Arn
+  OriginBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: ServerLessResizeBucketOriginal
+      PolicyDocument:
+        Statement:
+        - Action:
+          - s3:GetObject
+          Effect: Allow
+          Resource:
+            Fn::Join:
+            - ''
+            - - 'arn:aws:s3:::'
+              - Ref: ServerLessResizeBucketOriginal
+              - /*
+          Principal:
+            AWS:
+              Fn::GetAtt:
+              - ResizeFunctionExecutionRole
+              - Arn
+  ResizeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ResizeFunction
+      CodeUri: s3://vodimageresizeartifacts022021/fdb6937c0c7a246daa13af3aa7b3a83c
+      Handler: ImageResize.lambda_handler
+      Runtime: python3.7
+      Timeout: 600
+      Role:
+        Fn::GetAtt:
+        - ResizeFunctionExecutionRole
+        - Arn
+      Environment:
+        Variables:
+          BUCKET:
+            Ref: ServerLessResizeBucketSite
+          ALLOWEDRESOLUTION: '[1080x1440,800x600,600x1080,720x480]'
+      Events:
+        S3Bucket:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: ServerLessResizeBucketOriginal
+            Events: s3:ObjectCreated:*
+  ProcessingLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: ResizeFunction
+      Principal: s3.amazonaws.com
+      SourceArn:
+        Fn::GetAtt:
+        - ServerLessResizeBucketOriginal
+        - Arn
+      SourceAccount:
+        Ref: AWS::AccountId
+  ResizeFunctionExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Resource: '*'
+            Effect: Allow
+            Action:
+            - rekognition:DetectText
+            - rekognition:DetectFaces
+Outputs:
+  Bucket:
+    Value:
+      Ref: ServerLessResizeBucketSite
+  BucketPict:
+    Value:
+      Ref: ServerLessResizeBucketOriginal
+  BucketRegionalDomainName:
+    Value:
+      Fn::GetAtt:
+      - ServerLessResizeBucketSite
+      - RegionalDomainName
+  CloudFrontId:
+    Description: The cloud front id
+    Value:
+      Ref: CloudFrontDistribution

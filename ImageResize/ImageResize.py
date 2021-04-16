@@ -7,6 +7,8 @@ import logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+resolutions = ['1080x1440','800x600','600x1080','720x480']
+
 def lambda_handler(event, context):
     """If this lambda is executed, it means that the resized image is not already present in the bucket
        The lambda get the size in the path and resize the original image
@@ -20,49 +22,52 @@ def lambda_handler(event, context):
         #first of all, we log the event
         logger.info(event)
 
-        myImageName = event['pathParameters']['filename']
-        mySize = event['pathParameters']['size']
-        logger.info('Size to process: '+mySize)
-        
-        if "ALLOWEDRESOLUTION" in os.environ:
-            logger.info('allowed resolution activated')
-            if mySize not in os.environ['ALLOWEDRESOLUTION']:
-                logger.info('Resolution is not allowed, return 403 error')
-                return {
-                'statusCode': 403,
-                'body': "resolution not allowed"
-             }
+        for myRecord in event['Records']:
 
-        myTargetWidth,myTargetHeight = mySize.split('x')
-        myOutputPath =mySize
+            myObjectName = myRecord['s3']['object']['key']
+            #we get the image from S3
+            myOriginalImage = aws_Helper.getImageFromBucket(myRecord['s3']['bucket']['name'],myObjectName)
+            
+            myImageName = myObjectName.split('/').pop()
 
-        #we get the image from S3
-        myOriginalImage = aws_Helper.getImageFromBucket(os.environ['BUCKET'],myImageName)
+            for mySize in resolutions:
+                
+                logger.info('Size to process: '+mySize)
+                
+                if "ALLOWEDRESOLUTION" in os.environ:
+                    logger.info('allowed resolution activated')
+                    if mySize not in os.environ['ALLOWEDRESOLUTION']:
+                        logger.info('Resolution is not allowed, return 403 error')
+                        return {
+                        'statusCode': 403,
+                        'body': "resolution not allowed"
+                    }
 
-        if event['resource'].find('center') != -1 :
-            myResizedImage = Resizer.resizeCenter(myOriginalImage,int(myTargetWidth),int(myTargetHeight))
-            myOutputPath = 'center/'+myOutputPath
+                myTargetWidth,myTargetHeight = mySize.split('x')
+                myOutputPath =mySize
 
-        else :
-            #we analyze the image
-            myDetectedFaces , myDetectedTexts = aws_Helper.detectFacesAndTexts(myOriginalImage,aMinimalTextWidth=0.3,aMinimalTextHeight=0.08)
+                myResizedImageCentered = Resizer.resizeCenter(myOriginalImage,int(myTargetWidth),int(myTargetHeight))
+                myOutputPathCentered = 'center/'+myOutputPath
 
-            #we resize the image
-            myResizedImage = Resizer.smartResize(myOriginalImage,int(myTargetWidth),int(myTargetHeight),myDetectedFaces,myDetectedTexts)
-        
-        #we write the image
-        myImagePath = aws_Helper.putImageInBucket(myResizedImage,os.environ['BUCKET'],myOutputPath,myImageName)
+                #we analyze the image
+                myDetectedFaces , myDetectedTexts = aws_Helper.detectFacesAndTexts(myOriginalImage,aMinimalTextWidth=0.3,aMinimalTextHeight=0.08)
 
-        #we redirect to the stored image
-        image_s3_url = os.environ['URL']+'/'+myImagePath
+                #we resize the image
+                myResizedImage = Resizer.smartResize(myOriginalImage,int(myTargetWidth),int(myTargetHeight),myDetectedFaces,myDetectedTexts)
+                
+                #we write the images
+                myImagePathCenter = aws_Helper.putImageInBucket(myResizedImageCentered,os.environ['BUCKET'],myOutputPathCentered,myImageName)
+                myImagePath = aws_Helper.putImageInBucket(myResizedImage,os.environ['BUCKET'],myOutputPath,myImageName)
 
-        myResponse = {}
-        myResponse["statusCode"]=301
-        myResponse["headers"]={'Location': image_s3_url}
-        myResponse["body"]=json.dumps({})
-        
-        logger.info(myResponse)
-        return myResponse
+            #we get the json from S3
+            myPicList = aws_Helper.getJsonFromBucket(os.environ['BUCKET'],"picList.json")
+
+            #we update the json
+            myPicList['pics'].append(myImageName)
+            aws_Helper.putJsonInBucket(myPicList,os.environ['BUCKET'],"picList.json")
+
+        logger.info("end")
+        return 200
 
     except ClientError as ex:
         #if the original image cannot be found, we return a 404 error

@@ -12,6 +12,7 @@ from io import BytesIO
 import boto3
 from botocore.exceptions import ClientError
 from PIL import Image, ImageDraw
+import json
 
 """
 This function return a PIL.Image object from a S3 bucket
@@ -47,6 +48,32 @@ def putImageInBucket(anImage,aBucketName,aPath,anImageName):
     myS3Object.put(Body=myBuffer, ContentType='image/jpeg')
 
     return aPath+'/'+anImageName
+
+"""
+this function return a json object from a S3 bucket
+"""
+def getJsonFromBucket(aBucketName,aFileName):
+    myS3 = boto3.resource('s3')
+    myS3Object = myS3.Object(
+        bucket_name=aBucketName,
+        key=aFileName,
+    )
+    myS3ObjectBody = myS3Object.get()['Body'].read().decode('utf-8')
+    myJsonContent = json.loads(myS3ObjectBody)
+    return myJsonContent
+
+"""
+this function stores a JSON object in a S3 bucket.
+"""
+def putJsonInBucket(aJSONContent,aBucketName,aFileName):
+    myS3 = boto3.resource('s3')
+    myS3Object = myS3.Object(
+        bucket_name=aBucketName,
+        key=aFileName,
+    )
+
+    myS3Object.put(Body=(bytes(json.dumps(aJSONContent).encode('UTF-8'))),CacheControl='max-age=0')
+
 
 """
 this method uses the rekognition features to detect faces and big texts in an image

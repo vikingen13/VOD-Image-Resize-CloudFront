@@ -1,56 +1,102 @@
 AWSTemplateFormatVersion: 2010-09-09
 
-AWSTemplateFormatVersion: 2010-09-09
-
 Transform: AWS::Serverless-2016-10-31
 
-Resources:
-  Api:
-    Type: AWS::Serverless::Api
-    Properties:
-      DefinitionBody:
-        swagger: 2.0
-        info:
-          title: ServerlessResizeApi
-          description: Api for Image Resize invocation
-        paths:
-          /ImageResize/{size}/{filename}:
-            get:
-              x-amazon-apigateway-integration:
-                uri: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:ResizeFunction/invocations
-                type: AWS_PROXY
-                httpMethod: post
-          /ImageResize/center/{size}/{filename}:
-            get:
-              x-amazon-apigateway-integration:
-                uri: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:ResizeFunction/invocations
-                type: AWS_PROXY
-                httpMethod: post
-      StageName: prod
-      EndpointConfiguration: REGIONAL
-      Variables:
-        LambdaFunctionName: !Ref ResizeFunction
+###############################################################################
+Parameters:
+###############################################################################
 
-  ServerLessResizeBucket:
+  PriceClass:
+    Type: String
+    Description: The CloudFront distribution price class
+    Default: 'PriceClass_All'
+    AllowedValues:
+      - 'PriceClass_100'
+      - 'PriceClass_200'
+      - 'PriceClass_All'
+
+
+###############################################################################
+Resources:
+###############################################################################
+
+  ServerLessResizeBucketSite:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
+
+  ServerLessResizeBucketOriginal:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
     Properties:
-      AccessControl: PublicRead
-      WebsiteConfiguration:
-        IndexDocument: index.html
-        RoutingRules:
-          - RedirectRule:
-              HttpRedirectCode: 307
-              HostName: !Sub ${Api}.execute-api.${AWS::Region}.amazonaws.com
-              Protocol: https
-              ReplaceKeyPrefixWith: prod/ImageResize/
-            RoutingRuleCondition:
-              HttpErrorCodeReturnedEquals: 404
-      CorsConfiguration:
-        CorsRules:
-          - AllowedHeaders: ['*']
-            AllowedMethods: [GET]
-            AllowedOrigins: ['*']
+      DistributionConfig:
+        Comment: Distribution for VodImgResize
+        DefaultCacheBehavior:
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+          TargetOriginId: the-s3-bucket
+          ViewerProtocolPolicy: redirect-to-https
+        DefaultRootObject: index.html
+        CustomErrorResponses:
+          - ErrorCachingMinTTL: 300
+            ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCachingMinTTL: 300
+            ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+        Enabled: true
+        HttpVersion: http2
+        Origins:
+          - DomainName: !GetAtt ServerLessResizeBucketSite.RegionalDomainName
+            Id: the-s3-bucket
+            S3OriginConfig:
+              OriginAccessIdentity:
+                !Join ['', ['origin-access-identity/cloudfront/', !Ref CloudFrontOriginAccessIdentity]]
+        PriceClass: !Ref PriceClass
+
+  CloudFrontOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub 'CloudFront OAI for VodImageResize website'          
+
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ServerLessResizeBucketSite
+      PolicyDocument:
+        Statement:
+          - Action:
+              - s3:GetObject
+            Effect: Allow
+            Resource: !Join ['', ['arn:aws:s3:::', !Ref ServerLessResizeBucketSite, '/*']]
+            Principal:
+              CanonicalUser: !GetAtt CloudFrontOriginAccessIdentity.S3CanonicalUserId
+          - Action:
+              - s3:*
+            Effect: Allow
+            Resource: !Join ['', ['arn:aws:s3:::', !Ref ServerLessResizeBucketSite, '/*']]
+            Principal:
+              AWS: !GetAtt ResizeFunctionExecutionRole.Arn
+
+  OriginBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ServerLessResizeBucketOriginal
+      PolicyDocument:
+        Statement:
+          - Action:
+              - s3:GetObject
+            Effect: Allow
+            Resource: !Join ['', ['arn:aws:s3:::', !Ref ServerLessResizeBucketOriginal, '/*']]
+            Principal:
+              AWS: !GetAtt ResizeFunctionExecutionRole.Arn
+
 
   ResizeFunction:
     Type: AWS::Serverless::Function
@@ -59,54 +105,70 @@ Resources:
       CodeUri: ./ImageResize/function.zip
       Handler: ImageResize.lambda_handler
       Runtime: python3.7
-      Timeout: 60
+      Timeout: 600
+      Role: !GetAtt ResizeFunctionExecutionRole.Arn
       Environment:
         Variables:
-          BUCKET: !Ref ServerLessResizeBucket
-          URL: !GetAtt ServerLessResizeBucket.WebsiteURL
+          BUCKET: !Ref ServerLessResizeBucketSite
           ALLOWEDRESOLUTION: "[1080x1440,800x600,600x1080,720x480]"
+      Events:
+        S3Bucket:
+          Type: S3
+          Properties:
+            Bucket: !Ref ServerLessResizeBucketOriginal
+            Events: 's3:ObjectCreated:*'
+
+
+  ProcessingLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !Ref ResizeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !GetAtt ServerLessResizeBucketOriginal.Arn
+      SourceAccount: !Ref 'AWS::AccountId'
+
+
+  ResizeFunctionExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-          Statement:
-            - Resource: !Sub arn:aws:s3:::${ServerLessResizeBucket}/*
-              Effect: Allow
-              Action:
-                - s3:PutObject          
+        - PolicyName: root
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
             - Resource: "*"
               Effect: Allow
               Action:
                 - rekognition:DetectText
                 - rekognition:DetectFaces
+          
 
-  ResizeFunctionPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref ResizeFunction
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*
-
-  ServerLessResizeBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref ServerLessResizeBucket
-      PolicyDocument:
-        Statement:
-          - Action: s3:GetObject
-            Effect: Allow
-            Principal: "*"
-            Resource: !Sub arn:aws:s3:::${ServerLessResizeBucket}/*
-          - Action: s3:ListBucket
-            Effect: Allow
-            Principal: "*"
-            Resource: !Sub arn:aws:s3:::${ServerLessResizeBucket}
           
 
 Outputs:
-  BucketWebsiteUrl:
-    Value: !GetAtt ServerLessResizeBucket.WebsiteURL
   Bucket:
-    Value: !Ref ServerLessResizeBucket
+    Value: !Ref ServerLessResizeBucketSite
 
+  BucketPict:
+    Value: !Ref ServerLessResizeBucketOriginal
+  BucketRegionalDomainName:
+    Value: !GetAtt ServerLessResizeBucketSite.RegionalDomainName
 
+  CloudFrontId:
+    Description: The cloud front id
+    Value: !Ref CloudFrontDistribution
 
 
