@@ -5,10 +5,10 @@ bucketpict = aws cloudformation describe-stacks --stack-name vodImgResize --quer
 all: createbucket deploy deploy-site
 
 createbucket:
-	aws s3 mb s3://vodimageresizeartifacts022021
+	aws s3 mb s3://$(s3artifact)
 
 deploy:
-	aws cloudformation package --template-file VODImgResize.yml --s3-bucket vodimageresizeartifacts022021 --output-template-file package.template
+	aws cloudformation package --template-file VODImgResize.yml --s3-bucket $(s3artifact) --output-template-file package.template
 	aws cloudformation deploy --template-file package.template --stack-name vodImgResize --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND
 
 deploy-site:

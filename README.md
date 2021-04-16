@@ -19,9 +19,9 @@ The project deployment is done using AWS Cloud Formation.
 
 * Clone the project on a machine with AWS cli installed and configured.
 
-* First create a bucket to store the artifact by running "make createbucket" .
+* First create a bucket to store the artifact by running "make createbucket s3artifact=YOUR-ARTIFACT-BUCKET-NAME" .
 
-* Deploy the infrastructure by running "make deploy"
+* Deploy the infrastructure by running "make deploy s3artifact=YOUR-ARTIFACT-BUCKET-NAME""
 
 * Deploy the demo web site by running "make deploy-site"
 
