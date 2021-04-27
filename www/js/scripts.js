@@ -5,9 +5,9 @@
 
 function listImages(){
 
-    const fetchPromise = fetch(location.href + "picList.json");
+    const fetchPromise = fetch(window.apiurl);
     fetchPromise.then(response => {
-        console.log("1");
+        console.log(response);
         return response.json();
     }).then(myJson => {
         console.log("2");

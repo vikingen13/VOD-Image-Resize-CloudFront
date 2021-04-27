@@ -59,12 +59,15 @@ def lambda_handler(event, context):
                 myImagePathCenter = aws_Helper.putImageInBucket(myResizedImageCentered,os.environ['BUCKET'],myOutputPathCentered,myImageName)
                 myImagePath = aws_Helper.putImageInBucket(myResizedImage,os.environ['BUCKET'],myOutputPath,myImageName)
 
+            #at last we copy the original image as is
+            aws_Helper.putImageInBucket(myOriginalImage,os.environ['BUCKET'],'orig',myImageName)
             #we get the json from S3
-            myPicList = aws_Helper.getJsonFromBucket(os.environ['BUCKET'],"picList.json")
+            #myPicList = aws_Helper.getJsonFromBucket(os.environ['BUCKET'],"picList.json")
 
             #we update the json
-            myPicList['pics'].append(myImageName)
-            aws_Helper.putJsonInBucket(myPicList,os.environ['BUCKET'],"picList.json")
+            #myPicList['pics'].append(myImageName)
+            #aws_Helper.putJsonInBucket(myPicList,os.environ['BUCKET'],"picList.json")
+
 
         logger.info("end")
         return 200

@@ -119,7 +119,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: ResizeFunction
-      CodeUri: s3://vodimageresizeartifacts022021/fdb6937c0c7a246daa13af3aa7b3a83c
+      CodeUri: s3://vodimgresizeartifact234534653463/b59d7d82e1e5f2e7cd7cf39ffa651bd2
       Handler: ImageResize.lambda_handler
       Runtime: python3.7
       Timeout: 600
@@ -177,6 +177,125 @@ Resources:
             Action:
             - rekognition:DetectText
             - rekognition:DetectFaces
+  ReferenceImageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ReferenceImageFunction
+      CodeUri: s3://vodimgresizeartifact234534653463/fd2c557ea46c7531d3977d701dbb079a
+      Handler: ReferenceImage.lambda_handler
+      Runtime: python3.7
+      Timeout: 600
+      Role:
+        Fn::GetAtt:
+        - ReferenceImageFunctionExecutionRole
+        - Arn
+      Environment:
+        Variables:
+          DBTABLE:
+            Ref: imageDynamoDBTable
+      Events:
+        S3Bucket:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: ServerLessResizeBucketSite
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                - Name: prefix
+                  Value: orig/
+  ReferenceImageLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: ReferenceImageFunction
+      Principal: s3.amazonaws.com
+      SourceArn:
+        Fn::GetAtt:
+        - ServerLessResizeBucketSite
+        - Arn
+      SourceAccount:
+        Ref: AWS::AccountId
+  ReferenceImageFunctionExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: lll
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Resource: '*'
+            Effect: Allow
+            Action:
+            - dynamodb:BatchWriteItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+  imageDynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: Image
+        AttributeType: S
+      KeySchema:
+      - AttributeName: Image
+        KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: '5'
+        WriteCapacityUnits: '5'
+      TableName: imagesResized
+  APIRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - apigateway.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+      - PolicyName: APIPolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action:
+            - dynamodb:GetItem
+            - dynamodb:Scan
+            Resource:
+              Fn::GetAtt:
+              - imageDynamoDBTable
+              - Arn
+  Api:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: '1'
+      OpenApiVersion: 3.0.2
+      Cors:
+        AllowMethods: "'POST, GET, OPTIONS'"
+        AllowHeaders: "'X-Forwarded-For'"
+        AllowOrigin: "'*'"
+      DefinitionBody:
+        Fn::Transform:
+          Name: AWS::Include
+          Parameters:
+            Location: s3://vodimgresizeartifact234534653463/872afce13fdb2dced88b9eafe8fcde44
 Outputs:
   Bucket:
     Value:
@@ -184,6 +303,11 @@ Outputs:
   BucketPict:
     Value:
       Ref: ServerLessResizeBucketOriginal
+  BucketArn:
+    Value:
+      Fn::GetAtt:
+      - ServerLessResizeBucketSite
+      - Arn
   BucketRegionalDomainName:
     Value:
       Fn::GetAtt:
@@ -193,3 +317,7 @@ Outputs:
     Description: The cloud front id
     Value:
       Ref: CloudFrontDistribution
+  APIgwURL:
+    Description: The url of the API GW
+    Value:
+      Fn::Sub: https://${Api}.execute-api.${AWS::Region}.amazonaws.com/1

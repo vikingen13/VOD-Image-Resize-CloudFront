@@ -155,8 +155,121 @@ Resources:
                 - rekognition:DetectText
                 - rekognition:DetectFaces
           
+  ReferenceImageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ReferenceImageFunction
+      CodeUri: ./ReferenceImage/function.zip
+      Handler: ReferenceImage.lambda_handler
+      Runtime: python3.7
+      Timeout: 600
+      Role: !GetAtt ReferenceImageFunctionExecutionRole.Arn
+      Environment:
+        Variables:
+          DBTABLE: !Ref imageDynamoDBTable
+      Events:
+        S3Bucket:
+          Type: S3
+          Properties:
+            Bucket: !Ref ServerLessResizeBucketSite
+            Events: 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: orig/
 
+
+  ReferenceImageLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !Ref ReferenceImageFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !GetAtt  ServerLessResizeBucketSite.Arn
+      SourceAccount: !Ref 'AWS::AccountId'
+
+
+  ReferenceImageFunctionExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: lll
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Resource: "*"
+              Effect: Allow
+              Action:
+                - dynamodb:BatchWriteItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
           
+  imageDynamoDBTable: 
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      AttributeDefinitions: 
+        - 
+          AttributeName: "Image"
+          AttributeType: "S"
+      KeySchema: 
+        - 
+          AttributeName: "Image"
+          KeyType: "HASH"
+      ProvisionedThroughput: 
+        ReadCapacityUnits: "5"
+        WriteCapacityUnits: "5"
+      TableName: "imagesResized"
+
+  APIRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+         - Effect: Allow
+           Principal:
+             Service:
+             - apigateway.amazonaws.com
+           Action:
+           - sts:AssumeRole
+      Policies:
+        - PolicyName: APIPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+            - Effect: Allow
+              Action:
+                - "dynamodb:GetItem"
+                - "dynamodb:Scan"
+              Resource: !GetAtt imageDynamoDBTable.Arn      
+
+  Api:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: "1"
+      OpenApiVersion: 3.0.2
+      Cors:
+        AllowMethods: "'POST, GET, OPTIONS'"
+        AllowHeaders: "'X-Forwarded-For'"
+        AllowOrigin: "'*'"
+      DefinitionBody:
+        Fn::Transform:
+          Name: AWS::Include
+          Parameters:
+            Location: openapi.yaml
 
 Outputs:
   Bucket:
@@ -164,11 +277,19 @@ Outputs:
 
   BucketPict:
     Value: !Ref ServerLessResizeBucketOriginal
+
+  BucketArn:
+    Value: !GetAtt ServerLessResizeBucketSite.Arn
+
   BucketRegionalDomainName:
     Value: !GetAtt ServerLessResizeBucketSite.RegionalDomainName
 
   CloudFrontId:
     Description: The cloud front id
     Value: !Ref CloudFrontDistribution
+
+  APIgwURL:
+    Description: The url of the API GW
+    Value: !Sub https://${Api}.execute-api.${AWS::Region}.amazonaws.com/1
 
 
